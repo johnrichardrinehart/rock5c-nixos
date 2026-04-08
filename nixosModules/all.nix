@@ -1,6 +1,6 @@
 {
   imports = [
-    ./rock5c/rock5c.nix
+    ./rock5c-options.nix
     ./rock5c-base.nix
     ./rock5c-aic8800.nix
     ./rock5c-kodi.nix
