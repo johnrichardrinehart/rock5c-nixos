@@ -1,0 +1,73 @@
+From 0a0f211808b5886016c0a15cd94514975f842eaa Mon Sep 17 00:00:00 2001
+From: John Rinehart <johnrichardrinehart@gmail.com>
+Date: Mon, 6 Apr 2026 07:31:53 -0400
+Subject: [PATCH] gbm: default to DRM PRIME decode with GLES renderer
+
+---
+ system/settings/linux.xml                              |  2 +-
+ .../DVDCodecs/Video/DVDVideoCodecDRMPRIME.cpp          | 10 ++++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/system/settings/linux.xml b/system/settings/linux.xml
+index 6c2db262e1..a0ba0e01f4 100644
+--- a/system/settings/linux.xml
++++ b/system/settings/linux.xml
+@@ -177,7 +177,7 @@
+           <requirement>HAS_GLES</requirement>
+           <visible>false</visible>
+           <level>2</level>
+-          <default>false</default>
++          <default>true</default>
+           <control type="toggle" />
+         </setting>
+         <setting id="videoplayer.useprimedecoderforhw" type="boolean" parent="videoplayer.useprimedecoder" label="13438" help="36172">
+diff --git a/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.cpp b/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.cpp
+index 68b624fa4f..00e2f10f21 100644
+--- a/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.cpp
++++ b/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.cpp
+@@ -101,11 +101,15 @@ CDVDVideoCodecDRMPRIME::~CDVDVideoCodecDRMPRIME()
+ 
+ std::unique_ptr<CDVDVideoCodec> CDVDVideoCodecDRMPRIME::Create(CProcessInfo& processInfo)
+ {
++#if defined(HAVE_GBM)
++  return std::make_unique<CDVDVideoCodecDRMPRIME>(processInfo);
++#else
+   if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+           CSettings::SETTING_VIDEOPLAYER_USEPRIMEDECODER))
+     return std::make_unique<CDVDVideoCodecDRMPRIME>(processInfo);
+ 
+   return nullptr;
++#endif
+ }
+ 
+ void CDVDVideoCodecDRMPRIME::Register()
+@@ -148,10 +152,14 @@ void CDVDVideoCodecDRMPRIME::Register()
+ 
+ static bool IsSupportedHwFormat(const enum AVPixelFormat fmt)
+ {
++#if defined(HAVE_GBM)
++  return fmt == AV_PIX_FMT_DRM_PRIME;
++#else
+   bool hw = CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+       SETTING_VIDEOPLAYER_USEPRIMEDECODERFORHW);
+ 
+   return fmt == AV_PIX_FMT_DRM_PRIME && hw;
++#endif
+ }
+ 
+ static bool IsSupportedSwFormat(const enum AVPixelFormat fmt)
+@@ -163,9 +171,11 @@ static bool IsSupportedSwFormat(const enum AVPixelFormat fmt)
+ 
+ static const AVCodecHWConfig* FindHWConfig(const AVCodec* codec)
+ {
++#if !defined(HAVE_GBM)
+   if (!CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+           SETTING_VIDEOPLAYER_USEPRIMEDECODERFORHW))
+     return nullptr;
++#endif
+ 
+   const AVCodecHWConfig* config = nullptr;
+   for (int n = 0; (config = avcodec_get_hw_config(codec, n)); n++)
+-- 
+2.51.2
+

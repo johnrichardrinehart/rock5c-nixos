@@ -1,0 +1,195 @@
+From b1d90480df26157915fa1f416ca3d40b20add0b7 Mon Sep 17 00:00:00 2001
+From: John Rinehart <johnrichardrinehart@gmail.com>
+Date: Mon, 6 Apr 2026 11:01:48 -0400
+Subject: [PATCH] gbm: add DRM PRIME GLES HDR passthrough trace
+
+---
+ .../HwDecRender/RendererDRMPRIMEGLES.cpp      | 114 ++++++++++++++++++
+ 1 file changed, 114 insertions(+)
+
+diff --git a/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp b/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp
+index c36f016c83..9bbccd788e 100644
+--- a/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp
++++ b/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp
+@@ -14,6 +14,7 @@
+ #include "cores/VideoPlayer/VideoRenderers/RenderFactory.h"
+ #include "cores/VideoPlayer/VideoRenderers/RenderFlags.h"
+ #include "rendering/gles/RenderSystemGLES.h"
++#include "utils/DRMHelpers.h"
+ #include "utils/EGLFence.h"
+ #include "utils/EGLImage.h"
+ #include "utils/GLUtils.h"
+@@ -22,10 +23,55 @@
+ #include "windowing/WinSystem.h"
+ #include "windowing/linux/WinSystemEGL.h"
+ 
++#include <libavutil/pixdesc.h>
++#include <libavutil/pixfmt.h>
++#include <cstdlib>
++#include <cstring>
+ #include <memory>
++#include <sstream>
+ 
+ using namespace KODI::UTILS::EGL;
+ 
++namespace
++{
++
++bool IsDRMPRIMETraceEnabled()
++{
++  const char* value = std::getenv("KODI_DRMPRIME_TRACE");
++  if (!value || !*value)
++    return false;
++
++  return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
++         std::strcmp(value, "FALSE") != 0 && std::strcmp(value, "no") != 0 &&
++         std::strcmp(value, "NO") != 0;
++}
++
++std::string DescribeDescriptor(const AVDRMFrameDescriptor& desc)
++{
++  std::ostringstream out;
++  out << "objects=" << desc.nb_objects << ", layers=" << desc.nb_layers;
++
++  for (int layerIdx = 0; layerIdx < desc.nb_layers; ++layerIdx)
++  {
++    const auto& layer = desc.layers[layerIdx];
++    out << ", layer" << layerIdx << "={format=" << DRMHELPERS::FourCCToString(layer.format)
++        << ", planes=" << layer.nb_planes;
++    for (int planeIdx = 0; planeIdx < layer.nb_planes; ++planeIdx)
++    {
++      const auto& plane = layer.planes[planeIdx];
++      const auto& object = desc.objects[plane.object_index];
++      out << ", p" << planeIdx << ":obj=" << plane.object_index << ",fd=" << object.fd
++          << ",offset=" << plane.offset << ",pitch=" << plane.pitch
++          << ",modifier=" << DRMHELPERS::ModifierToString(object.format_modifier);
++    }
++    out << "}";
++  }
++
++  return out.str();
++}
++
++} // namespace
++
+ CRendererDRMPRIMEGLES::~CRendererDRMPRIMEGLES()
+ {
+   Flush(false);
+@@ -51,6 +97,13 @@ CBaseRenderer* CRendererDRMPRIMEGLES::Create(CVideoBuffer* buffer)
+     return nullptr;
+   }
+ 
++  if (IsDRMPRIMETraceEnabled())
++  {
++    CLog::Log(LOGDEBUG,
++              "CRendererDRMPRIMEGLES::{} - probing buffer id {} for renderer selection: {}",
++              __FUNCTION__, buf->GetId(), DescribeDescriptor(*desc));
++  }
++
+   uint64_t modifier = desc->objects[0].format_modifier;
+   uint32_t format = desc->layers[0].format;
+ 
+@@ -63,7 +116,24 @@ CBaseRenderer* CRendererDRMPRIMEGLES::Create(CVideoBuffer* buffer)
+ 
+   CEGLImage image{winSystemEGL->GetEGLDisplay()};
+   if (!image.SupportsFormatAndModifier(format, modifier))
++  {
++    if (IsDRMPRIMETraceEnabled())
++    {
++      CLog::Log(LOGDEBUG,
++                "CRendererDRMPRIMEGLES::{} - rejected buffer id {} during probe: format={}, modifier={}",
++                __FUNCTION__, buf->GetId(), DRMHELPERS::FourCCToString(format),
++                DRMHELPERS::ModifierToString(modifier));
++    }
+     return nullptr;
++  }
++
++  if (IsDRMPRIMETraceEnabled())
++  {
++    CLog::Log(LOGDEBUG,
++              "CRendererDRMPRIMEGLES::{} - accepted buffer id {} during probe: format={}, modifier={}",
++              __FUNCTION__, buf->GetId(), DRMHELPERS::FourCCToString(format),
++              DRMHELPERS::ModifierToString(modifier));
++  }
+ #endif
+ 
+   return new CRendererDRMPRIMEGLES();
+@@ -100,6 +170,19 @@ bool CRendererDRMPRIMEGLES::Configure(const VideoPicture& picture,
+   if (!winSystem)
+     return false;
+ 
++  if (picture.color_transfer == AVCOL_TRC_SMPTE2084 ||
++      picture.color_transfer == AVCOL_TRC_ARIB_STD_B67)
++  {
++    const bool hdrPassthrough = winSystem->SetHDR(&picture);
++
++    CLog::Log(LOGDEBUG, "CRendererDRMPRIMEGLES::{} - HDR passthrough: {}", __FUNCTION__,
++              hdrPassthrough ? "on" : "off");
++  }
++  else
++  {
++    winSystem->SetHDR(nullptr);
++  }
++
+   auto winSystemEGL = dynamic_cast<KODI::WINDOWING::LINUX::CWinSystemEGL*>(winSystem);
+ 
+   if (!winSystemEGL)
+@@ -118,6 +201,18 @@ bool CRendererDRMPRIMEGLES::Configure(const VideoPicture& picture,
+ 
+   m_clearColour = winSystem->UseLimitedColor() ? (16.0f / 0xff) : 0.0f;
+ 
++  if (IsDRMPRIMETraceEnabled())
++  {
++    CLog::Log(
++        LOGDEBUG,
++        "CRendererDRMPRIMEGLES::{} - configured renderer: {}x{}, fps={:0.3f}, pixfmt={}, color_space={}, color_primaries={}, color_transfer={}, color_range={}, bits={}, hdrDisplayEnabled={}, hdrDisplay={}",
++        __FUNCTION__, m_sourceWidth, m_sourceHeight, fps, static_cast<int>(m_format),
++        static_cast<int>(picture.color_space), static_cast<int>(picture.color_primaries),
++        static_cast<int>(picture.color_transfer), static_cast<int>(picture.color_range),
++        picture.colorBits, winSystem->IsHDRDisplaySettingEnabled() ? "true" : "false",
++        winSystem->IsHDRDisplay() ? "true" : "false");
++  }
++
+   m_configured = true;
+   return true;
+ }
+@@ -139,6 +234,9 @@ void CRendererDRMPRIMEGLES::AddVideoPicture(const VideoPicture& picture, int ind
+ 
+ bool CRendererDRMPRIMEGLES::Flush(bool saveBuffers)
+ {
++  if (auto* winSystem = CServiceBroker::GetWinSystem(); winSystem)
++    winSystem->SetHDR(nullptr);
++
+   if (!saveBuffers)
+     for (int i = 0; i < NUM_BUFFERS; i++)
+       ReleaseBuffer(i);
+@@ -311,10 +409,26 @@ void CRendererDRMPRIMEGLES::Render(unsigned int flags, int index)
+     return;
+ 
+   if (!buf.texture.Map(buffer))
++  {
++    if (IsDRMPRIMETraceEnabled())
++      CLog::Log(LOGDEBUG, "CRendererDRMPRIMEGLES::{} - map failed for buffer id {}", __FUNCTION__,
++                buffer->GetId());
+     return;
++  }
+ 
+   glBindTexture(GL_TEXTURE_EXTERNAL_OES, buf.texture.GetTexture());
+ 
++  if (IsDRMPRIMETraceEnabled())
++  {
++    const VideoPicture& picture = buffer->GetPicture();
++    CLog::Log(
++        LOGDEBUG,
++        "CRendererDRMPRIMEGLES::{} - rendering external texture path: shader=SM_TEXTURE_RGBA_OES, target=GL_TEXTURE_EXTERNAL_OES, color_space={}, color_primaries={}, color_transfer={}, color_range={}, bits={}",
++        __FUNCTION__, static_cast<int>(picture.color_space),
++        static_cast<int>(picture.color_primaries), static_cast<int>(picture.color_transfer),
++        static_cast<int>(picture.color_range), picture.colorBits);
++  }
++
+   renderSystem->EnableGUIShader(ShaderMethodGLES::SM_TEXTURE_RGBA_OES);
+ 
+   GLubyte idx[4] = {0, 1, 3, 2}; // Determines order of triangle strip
+-- 
+2.51.2
+
