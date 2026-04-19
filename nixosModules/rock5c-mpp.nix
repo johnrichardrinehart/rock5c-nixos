@@ -33,7 +33,7 @@ let
     else
       null;
   kernelVersion = config.boot.kernelPackages.kernel.version;
-  supportedKernelSeries = lib.versionAtLeast kernelVersion "6.19" && lib.versionOlder kernelVersion "6.20";
+  supportedKernelSeries = lib.versionAtLeast kernelVersion "6.19";
 in
 {
   config = lib.mkMerge [
@@ -53,7 +53,7 @@ in
         }
         {
           assertion = !(cfg.supportedKernelCheck.enable && cfg.videoBackend == "mpp" && !supportedKernelSeries);
-          message = "rock5c.videoBackend = \"mpp\" currently supports Linux 6.19.x only. Disable rock5c.supportedKernelCheck.enable if you are carrying your own adapted kernel.";
+          message = "rock5c.videoBackend = \"mpp\" currently requires Linux 6.19 or newer. Disable rock5c.supportedKernelCheck.enable if you are carrying your own adapted kernel.";
         }
       ];
     }
@@ -551,7 +551,7 @@ in
         }
         {
           assertion = !(cfg.supportedKernelCheck.enable && cfg.videoBackend == "mpp" && !supportedKernelSeries);
-          message = "rock5c.videoBackend = \"mpp\" currently supports Linux 6.19.x only. Disable rock5c.supportedKernelCheck.enable if you are carrying your own adapted kernel.";
+          message = "rock5c.videoBackend = \"mpp\" currently requires Linux 6.19 or newer. Disable rock5c.supportedKernelCheck.enable if you are carrying your own adapted kernel.";
         }
       ];
 

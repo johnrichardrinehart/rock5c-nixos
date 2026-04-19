@@ -7,7 +7,7 @@ let
   cfg = config.rock5c.rkvdec;
   rock5cCfg = config.rock5c;
   kernelVersion = config.boot.kernelPackages.kernel.version;
-  supportedKernelSeries = lib.versionAtLeast kernelVersion "6.19" && lib.versionOlder kernelVersion "6.20";
+  supportedKernelSeries = lib.versionAtLeast kernelVersion "6.19";
 
   patchFiles = [
     "0001-media-v4l2-add-hevc-ext-rps-controls-needed-by-rkvdec.patch"
@@ -39,7 +39,7 @@ in
         }
         {
           assertion = !(cfg.enable && rock5cCfg.supportedKernelCheck.enable && !supportedKernelSeries);
-          message = "rock5c.rkvdec.enable currently supports Linux 6.19.x only. Disable rock5c.supportedKernelCheck.enable if you are carrying your own adapted kernel.";
+          message = "rock5c.rkvdec.enable currently requires Linux 6.19 or newer. Disable rock5c.supportedKernelCheck.enable if you are carrying your own adapted kernel.";
         }
       ];
     }
