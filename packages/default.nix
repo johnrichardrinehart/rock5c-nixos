@@ -93,12 +93,12 @@ let
     ffmpegPkg:
     ffmpegPkg.overrideAttrs (old: {
       pname = "ffmpeg-rockchip";
-      version = "unstable-2026-03-27";
+      version = "unstable-2026-04-23";
       src = pkgs.fetchFromGitHub {
         owner = "nyanmisaka";
         repo = "ffmpeg-rockchip";
-        rev = "master";
-        hash = "sha256-xkL71NLsb7KuzpLf0bN8OT/C9kAf+PyaLp2HZqYM1yQ=";
+        rev = "40c412daccf08164493da0de990eb99a8948116b";
+        hash = "sha256-EdQT2skG2VTLqxc9mvn/tOgNOPpkopYx79Hi8I6Nx9w=";
       };
       patches = lib.filter (p: !(lib.hasSuffix "lcevcdec-4.0.0-compat.patch" (toString p))) (old.patches or [ ]);
       configureFlags =
