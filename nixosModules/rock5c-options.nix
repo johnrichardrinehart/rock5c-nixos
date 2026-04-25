@@ -4,7 +4,10 @@
     enable = lib.mkEnableOption "radxa rock5c hardware stuff";
 
     videoBackend = lib.mkOption {
-      type = lib.types.enum [ "mainline" "mpp" ];
+      type = lib.types.enum [
+        "mainline"
+        "mpp"
+      ];
       default = "mainline";
       description = ''
         Select which Rockchip video stack should own the RK3588S2 media blocks.
@@ -99,40 +102,24 @@
     };
 
     media = {
-      enable = lib.mkEnableOption "Rock 5C media packages and Kodi session variants";
+      enable = lib.mkEnableOption "Rock 5C media packages for the Wayland/Hyprland RKMPP stack";
 
-      ffmpegTools.enable = lib.mkEnableOption "Rock 5C FFmpeg V4L2 request tools" // {
+      ffmpegTools.enable = lib.mkEnableOption "Rock 5C FFmpeg RKMPP tools" // {
         default = true;
       };
 
       mpv = {
-        enable = lib.mkEnableOption "Rock 5C mpv package with hardware-decoding-focused FFmpeg" // {
-          default = true;
-        };
-
-        variant = lib.mkOption {
-          type = lib.types.enum [ "rockchip" "v4l2request" ];
-          default = "v4l2request";
-          description = ''
-            Which Rock 5C mpv build to install.
-            `rockchip` links mpv against ffmpeg-rockchip for `rkmpp`/RGA support.
-            `v4l2request` keeps the local FFmpeg V4L2-request patch stack.
-          '';
+        enable = lib.mkEnableOption "install the stock mpv package alongside Kodi" // {
+          default = false;
         };
       };
 
       kodi = {
-        enable = lib.mkEnableOption "Rock 5C Kodi 22 V4L2 request package" // {
+        enable = lib.mkEnableOption "Rock 5C Kodi 22 Wayland RKMPP package" // {
           default = true;
         };
 
         autostart.enable = lib.mkEnableOption "autostart Kodi after the compositor/session comes up";
-
-        sessionUser = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = "User account to run the standalone GBM Kodi session under.";
-        };
 
         disableCecStandbyOnExit = lib.mkOption {
           type = lib.types.bool;
@@ -141,16 +128,6 @@
             Apply a Rock 5C-specific Kodi patch that suppresses HDMI-CEC standby and
             inactive-source commands when Kodi exits.
           '';
-        };
-
-        variant = lib.mkOption {
-          type = lib.types.enum [ "auto" "wayland" "x11" "gbm" ];
-          default = "auto";
-        };
-
-        ffmpegBackend = lib.mkOption {
-          type = lib.types.enum [ "auto" "ffmpeg8-rkmpp-v4l2request" "ffmpeg8-rkmpp" "ffmpeg-rockchip" ];
-          default = "auto";
         };
       };
     };
