@@ -115,7 +115,7 @@
       };
 
       kodi = {
-        enable = lib.mkEnableOption "Rock 5C Kodi 22 Wayland RKMPP package" // {
+        enable = lib.mkEnableOption "Rock 5C Kodi 22 Wayland RKMPP Dolby Vision package" // {
           default = true;
         };
 

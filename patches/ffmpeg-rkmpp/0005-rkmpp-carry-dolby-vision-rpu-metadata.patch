@@ -1,0 +1,243 @@
+diff --git a/configure b/configure
+index 732de59..55c29fa 100755
+--- a/configure
++++ b/configure
+@@ -3455,7 +3455,7 @@ hevc_oh_encoder_deps="ohcodec"
+ hevc_qsv_decoder_select="hevc_mp4toannexb_bsf qsvdec"
+ hevc_qsv_encoder_select="hevcparse qsvenc"
+ hevc_rkmpp_decoder_deps="rkmpp"
+-hevc_rkmpp_decoder_select="hevc_mp4toannexb_bsf"
++hevc_rkmpp_decoder_select="dovi_rpudec hevc_mp4toannexb_bsf hevcparse"
+ hevc_vaapi_encoder_deps="VAEncPictureParameterBufferHEVC"
+ hevc_vaapi_encoder_select="atsc_a53 cbs_h265 vaapi_encode"
+ hevc_vulkan_encoder_select="atsc_a53 cbs_h265 vulkan_encode"
+diff --git a/libavcodec/rkmppdec.c b/libavcodec/rkmppdec.c
+index f326e1f..9b8b3c2 100644
+--- a/libavcodec/rkmppdec.c
++++ b/libavcodec/rkmppdec.c
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <drm_fourcc.h>
++#include <inttypes.h>
+ #include <pthread.h>
+ #include <rockchip/mpp_buffer.h>
+ #include <rockchip/rk_mpi.h>
+@@ -30,6 +31,9 @@
+ #include "codec_internal.h"
+ #include "decode.h"
+ #include "decode_bsf.h"
++#include "dovi_rpu.h"
++#include "h2645_parse.h"
++#include "hevc/hevc.h"
+ #include "hwconfig.h"
+ #include "libavutil/refstruct.h"
+ #include "libavutil/buffer.h"
+@@ -42,6 +46,7 @@
+ #include "libavutil/mem.h"
+ 
+ #define FRAMEGROUP_MAX_FRAMES   16
++#define RKMPP_DOVI_QUEUE_SIZE   64
+ typedef struct {
+     MppCtx ctx;
+     MppApi *mpi;
+@@ -54,11 +59,18 @@ typedef struct {
+     AVBufferRef *device_ref;
+ } RKMPPDecoder;
+ 
++typedef struct {
++    int64_t pts;
++    AVBufferRef *metadata;
++} RKMPPDoviMetadata;
++
+ typedef struct {
+     AVClass *av_class;
+     RKMPPDecoder *decoder;           ///< RefStruct reference
+     AVPacket pending_pkt;
+     char pending_eof;
++    DOVIContext dovi;
++    RKMPPDoviMetadata dovi_queue[RKMPP_DOVI_QUEUE_SIZE];
+ } RKMPPDecodeContext;
+ 
+ typedef struct {
+@@ -123,10 +135,128 @@ static int rkmpp_write_data(AVCodecContext *avctx, uint8_t *buffer, int size, in
+     return ret;
+ }
+ 
++static void rkmpp_clear_dovi_queue(RKMPPDecodeContext *rk_context)
++{
++    for (int i = 0; i < FF_ARRAY_ELEMS(rk_context->dovi_queue); i++) {
++        av_buffer_unref(&rk_context->dovi_queue[i].metadata);
++        rk_context->dovi_queue[i].pts = AV_NOPTS_VALUE;
++    }
++}
++
++static int rkmpp_queue_dovi_metadata(AVCodecContext *avctx, int64_t pts)
++{
++    RKMPPDecodeContext *rk_context = avctx->priv_data;
++    AVDOVIMetadata *metadata = NULL;
++    AVBufferRef *buf;
++    int size;
++
++    if (pts == AV_NOPTS_VALUE)
++        return 0;
++
++    size = ff_dovi_get_metadata(&rk_context->dovi, &metadata);
++    if (size < 0)
++        return size;
++    if (!size)
++        return 0;
++
++    buf = av_buffer_create((uint8_t *)metadata, size, NULL, NULL, 0);
++    if (!buf) {
++        av_free(metadata);
++        return AVERROR(ENOMEM);
++    }
++
++    for (int i = 0; i < FF_ARRAY_ELEMS(rk_context->dovi_queue); i++) {
++        RKMPPDoviMetadata *entry = &rk_context->dovi_queue[i];
++
++        if (!entry->metadata || entry->pts == pts) {
++            av_buffer_unref(&entry->metadata);
++            entry->pts = pts;
++            entry->metadata = buf;
++            return 0;
++        }
++    }
++
++    av_log(avctx, AV_LOG_WARNING, "Dropping Dolby Vision metadata for PTS %"PRId64": queue full\n",
++           pts);
++    av_buffer_unref(&buf);
++    return 0;
++}
++
++static int rkmpp_attach_dovi_metadata(AVCodecContext *avctx, AVFrame *frame)
++{
++    RKMPPDecodeContext *rk_context = avctx->priv_data;
++
++    if (frame->pts == AV_NOPTS_VALUE)
++        return 0;
++
++    for (int i = 0; i < FF_ARRAY_ELEMS(rk_context->dovi_queue); i++) {
++        RKMPPDoviMetadata *entry = &rk_context->dovi_queue[i];
++
++        if (entry->metadata && entry->pts == frame->pts) {
++            AVBufferRef *metadata = av_buffer_ref(entry->metadata);
++            AVFrameSideData *sd;
++
++            if (!metadata)
++                return AVERROR(ENOMEM);
++
++            sd = av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_DOVI_METADATA, metadata);
++            if (!sd) {
++                av_buffer_unref(&metadata);
++                return AVERROR(ENOMEM);
++            }
++
++            av_buffer_unref(&entry->metadata);
++            entry->pts = AV_NOPTS_VALUE;
++            return 0;
++        }
++    }
++
++    return 0;
++}
++
++static int rkmpp_parse_hevc_dovi(AVCodecContext *avctx, const AVPacket *avpkt)
++{
++    RKMPPDecodeContext *rk_context = avctx->priv_data;
++    H2645Packet pkt = { 0 };
++    int ret;
++
++    if (avctx->codec_id != AV_CODEC_ID_HEVC || !avpkt->size)
++        return 0;
++
++    ret = ff_h2645_packet_split(&pkt, avpkt->data, avpkt->size, avctx, 0,
++                                AV_CODEC_ID_HEVC, H2645_FLAG_SMALL_PADDING);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_DEBUG, "Failed to split HEVC packet for Dolby Vision RPU parsing\n");
++        return 0;
++    }
++
++    if (pkt.nb_nals > 1 && pkt.nals[pkt.nb_nals - 1].type == HEVC_NAL_UNSPEC62 &&
++        pkt.nals[pkt.nb_nals - 1].size > 2 && !pkt.nals[pkt.nb_nals - 1].nuh_layer_id &&
++        !pkt.nals[pkt.nb_nals - 1].temporal_id) {
++        H2645NAL *nal = &pkt.nals[pkt.nb_nals - 1];
++
++        ret = ff_dovi_rpu_parse(&rk_context->dovi, nal->data + 2, nal->size - 2,
++                                avctx->err_recognition);
++        if (ret < 0) {
++            av_log(avctx, AV_LOG_WARNING, "Error parsing Dolby Vision RPU NAL unit\n");
++            ff_dovi_ctx_flush(&rk_context->dovi);
++        } else {
++            ret = rkmpp_queue_dovi_metadata(avctx, avpkt->pts);
++            if (ret < 0)
++                av_log(avctx, AV_LOG_WARNING, "Error queueing Dolby Vision metadata\n");
++        }
++    }
++
++    ff_h2645_packet_uninit(&pkt);
++    return 0;
++}
++
+ static av_cold int rkmpp_close_decoder(AVCodecContext *avctx)
+ {
+     RKMPPDecodeContext *rk_context = avctx->priv_data;
+     av_packet_unref(&rk_context->pending_pkt);
++    rkmpp_clear_dovi_queue(rk_context);
++    ff_dovi_ctx_unref(&rk_context->dovi);
+     av_refstruct_unref(&rk_context->decoder);
+     return 0;
+ }
+@@ -158,6 +288,7 @@ static av_cold int rkmpp_init_decoder(AVCodecContext *avctx)
+     enum AVPixelFormat pix_fmts[3] = { AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE, AV_PIX_FMT_NONE };
+     int ret;
+     RK_S32 paramS32;
++    const AVPacketSideData *sd;
+ 
+     switch (avctx->pix_fmt) {
+     case AV_PIX_FMT_YUV420P10:
+@@ -183,6 +314,12 @@ static av_cold int rkmpp_init_decoder(AVCodecContext *avctx)
+         goto fail;
+     }
+     rk_context->decoder = decoder;
++    rk_context->dovi.logctx = avctx;
++    rkmpp_clear_dovi_queue(rk_context);
++
++    sd = ff_get_coded_side_data(avctx, AV_PKT_DATA_DOVI_CONF);
++    if (sd && sd->size >= sizeof(rk_context->dovi.cfg))
++        rk_context->dovi.cfg = *(const AVDOVIDecoderConfigurationRecord *)sd->data;
+ 
+     av_log(avctx, AV_LOG_DEBUG, "Initializing RKMPP decoder.\n");
+ 
+@@ -299,6 +436,8 @@ static int rkmpp_send_packet(AVCodecContext *avctx, const AVPacket *avpkt)
+         decoder->first_packet = 0;
+     }
+ 
++    rkmpp_parse_hevc_dovi(avctx, avpkt);
++
+     // now send packet
+     ret = rkmpp_write_data(avctx, avpkt->data, avpkt->size, avpkt->pts);
+     if (ret && ret!=AVERROR(EAGAIN))
+@@ -474,6 +613,12 @@ static int rkmpp_retrieve_frame(AVCodecContext *avctx, AVFrame *frame)
+                 return AVERROR(ENOMEM);
+             }
+ 
++            ret = rkmpp_attach_dovi_metadata(avctx, frame);
++            if (ret < 0) {
++                av_frame_unref(frame);
++                return ret;
++            }
++
+             return 0;
+         } else {
+             av_log(avctx, AV_LOG_ERROR, "Failed to retrieve the frame buffer, frame is dropped (code = %d)\n", ret);
+@@ -546,6 +691,8 @@ static av_cold void rkmpp_flush(AVCodecContext *avctx)
+         decoder->eos_reached = 0;
+         rk_context->pending_eof = 0;
+         av_packet_unref(&rk_context->pending_pkt);
++        rkmpp_clear_dovi_queue(rk_context);
++        ff_dovi_ctx_flush(&rk_context->dovi);
+     } else
+         av_log(avctx, AV_LOG_ERROR, "Failed to reset MPI (code = %d)\n", ret);
+ }

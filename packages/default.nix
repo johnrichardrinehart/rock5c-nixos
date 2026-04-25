@@ -41,12 +41,13 @@ let
       ../patches/ffmpeg-rkmpp/0001-rkmpp-retain-packets-on-decoder-backpressure.patch
       ../patches/ffmpeg-rkmpp/0002-rkmpp-export-rockchip-10-bit-as-nv15.patch
       ../patches/ffmpeg-rkmpp/0004-rkmpp-use-non-blocking-output-polling.patch
+      ../patches/ffmpeg-rkmpp/0005-rkmpp-carry-dolby-vision-rpu-metadata.patch
     ];
     configureFlags = (old.configureFlags or [ ]) ++ [ "--enable-rkmpp" ];
     buildInputs = (old.buildInputs or [ ]) ++ [ rockchipMpp ];
   });
 
-  kodi22WaylandRkmpp =
+  kodi22WaylandRkmppDovi =
     (pkgs.kodi-wayland.override {
       ffmpeg = ffmpeg8Rkmpp;
       gbmSupport = true;
@@ -68,10 +69,17 @@ let
           ../patches/kodi/0011-rock5c-force-drm-prime-decode-on-wayland.patch
           ../patches/kodi/0012-rock5c-include-winsystem-for-forced-drm-prime.patch
           ../patches/kodi/0013-rock5c-drop-const-winsystem-for-name-lookup.patch
+          ../patches/kodi/0014-rock5c-wayland-rkmpp-dovi-profile5-libplacebo.patch
         ];
 
         buildInputs = (old.buildInputs or [ ]) ++ [
           libcrossguidWithPc
+          pkgs.libplacebo
+          pkgs.libunwind.dev
+          pkgs.xorg.libxcb.dev
+          pkgs.shaderc.dev
+          pkgs.vulkan-loader.dev
+          pkgs.libdovi
           pkgs.libsysprof-capture
           pkgs.pcre2
           pkgs.exiv2
@@ -116,7 +124,7 @@ in
   ffmpeg_8-full-rkmpp = ffmpeg8Rkmpp;
   flash-rock5c-emmc = flashRock5cEmmc;
   flash-rock5c-sd = flashRock5cSd;
-  kodi_22 = kodi22WaylandRkmpp;
+  kodi_22 = kodi22WaylandRkmppDovi;
   libcrossguid-with-pc = libcrossguidWithPc;
   mali-g610-firmware = maliG610Firmware;
   rock5c-flash-image = rock5cFlashImage;
