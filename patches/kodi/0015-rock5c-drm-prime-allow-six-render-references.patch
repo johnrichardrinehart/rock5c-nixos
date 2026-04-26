@@ -1,0 +1,11 @@
+diff --git a/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.h b/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.h
+index db49d165e7..048616709a 100644
+--- a/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.h
++++ b/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecDRMPRIME.h
+@@ -28,5 +28,5 @@ public:
+   void Reset() override;
+   CDVDVideoCodec::VCReturn GetPicture(VideoPicture* pVideoPicture) override;
+   const char* GetName() override { return m_name.c_str(); }
+-  unsigned GetAllowedReferences() override { return 5; }
++  unsigned GetAllowedReferences() override { return 6; }
+   void SetCodecControl(int flags) override;

@@ -230,10 +230,10 @@ index 3bf8f05f9f..fadfe1e3e0 100644
      return EGL_YUV_FULL_RANGE_EXT;
  
 diff --git a/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp b/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp
-index c36f016c83..53e3817f47 100644
+index c36f016c83..6f142ebaf1 100644
 --- a/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp
 +++ b/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.cpp
-@@ -22,13 +22,460 @@
+@@ -22,13 +22,486 @@
  #include "windowing/WinSystem.h"
  #include "windowing/linux/WinSystemEGL.h"
  
@@ -307,6 +307,32 @@ index c36f016c83..53e3817f47 100644
 +    return reinterpret_cast<pl_voidfunc_t>(dlsym(egl, procname));
 +
 +  return nullptr;
++}
++
++bool ShouldLogProfile5Anomaly(uint64_t count)
++{
++  return count <= 16 || count % 120 == 0;
++}
++
++int64_t FramePtsForLog(const AVFrame* frame)
++{
++  if (!frame)
++    return AV_NOPTS_VALUE;
++  if (frame->best_effort_timestamp != AV_NOPTS_VALUE)
++    return frame->best_effort_timestamp;
++  return frame->pts;
++}
++
++uint32_t DrmFormatForLog(const AVFrame* frame)
++{
++  if (!frame || frame->format != AV_PIX_FMT_DRM_PRIME || !frame->data[0])
++    return 0;
++
++  const auto* drm = reinterpret_cast<const AVDRMFrameDescriptor*>(frame->data[0]);
++  if (!drm || drm->nb_layers <= 0)
++    return 0;
++
++  return drm->layers[0].format;
 +}
 +
 +bool IsRkmppNv15DrmPrimeFrame(const AVFrame* frame)
@@ -694,7 +720,7 @@ index c36f016c83..53e3817f47 100644
  }
  
  CBaseRenderer* CRendererDRMPRIMEGLES::Create(CVideoBuffer* buffer)
-@@ -118,10 +565,131 @@ bool CRendererDRMPRIMEGLES::Configure(const VideoPicture& picture,
+@@ -118,10 +591,131 @@ bool CRendererDRMPRIMEGLES::Configure(const VideoPicture& picture,
  
    m_clearColour = winSystem->UseLimitedColor() ? (16.0f / 0xff) : 0.0f;
  
@@ -826,7 +852,7 @@ index c36f016c83..53e3817f47 100644
  void CRendererDRMPRIMEGLES::AddVideoPicture(const VideoPicture& picture, int index)
  {
    BUFFER& buf = m_buffers[index];
-@@ -135,6 +703,7 @@ void CRendererDRMPRIMEGLES::AddVideoPicture(const VideoPicture& picture, int ind
+@@ -135,6 +729,7 @@ void CRendererDRMPRIMEGLES::AddVideoPicture(const VideoPicture& picture, int ind
    }
    buf.videoBuffer = picture.videoBuffer;
    buf.videoBuffer->Acquire();
@@ -834,7 +860,7 @@ index c36f016c83..53e3817f47 100644
  }
  
  bool CRendererDRMPRIMEGLES::Flush(bool saveBuffers)
-@@ -160,6 +729,7 @@ void CRendererDRMPRIMEGLES::ReleaseBuffer(int index)
+@@ -160,6 +755,7 @@ void CRendererDRMPRIMEGLES::ReleaseBuffer(int index)
      buf.videoBuffer->Release();
      buf.videoBuffer = nullptr;
    }
@@ -842,34 +868,107 @@ index c36f016c83..53e3817f47 100644
  }
  
  bool CRendererDRMPRIMEGLES::NeedBuffer(int index)
-@@ -310,6 +878,9 @@ void CRendererDRMPRIMEGLES::Render(unsigned int flags, int index)
+@@ -310,6 +906,27 @@ void CRendererDRMPRIMEGLES::Render(unsigned int flags, int index)
    if (!renderSystem)
      return;
  
-+  if (buf.usePlaceboDoviProfile5 && RenderPlacebo(buffer, index))
++  if (buf.usePlaceboDoviProfile5)
++  {
++    ++m_profile5Frames;
++    if (RenderPlacebo(buffer, index))
++      return;
++
++    const uint64_t blocked = ++m_profile5BlockedFallbacks;
++    AVFrame* avFrame = buffer->GetAVFrame();
++    if (ShouldLogProfile5Anomaly(blocked))
++    {
++      CLog::Log(LOGWARNING,
++                "DRMPRIMEGLES: blocked raw DRM PRIME fallback for Dolby Vision Profile 5 frame "
++                "index={} pts={} drm_format=0x{:08x} has_dovi_side_data={} blocked={} frames={}",
++                index, FramePtsForLog(avFrame), DrmFormatForLog(avFrame),
++                avFrame && av_frame_get_side_data(avFrame, AV_FRAME_DATA_DOVI_METADATA) != nullptr,
++                blocked, m_profile5Frames);
++    }
++    FinishSkippedProfile5Buffer(index);
 +    return;
++  }
 +
    if (!buf.texture.Map(buffer))
      return;
  
-@@ -397,6 +968,124 @@ void CRendererDRMPRIMEGLES::Render(unsigned int flags, int index)
+@@ -397,6 +1014,179 @@ void CRendererDRMPRIMEGLES::Render(unsigned int flags, int index)
    buf.fence->CreateFence();
  }
  
++void CRendererDRMPRIMEGLES::FinishSkippedProfile5Buffer(int index)
++{
++  BUFFER& buf = m_buffers[index];
++  if (buf.fence)
++  {
++    buf.fence->DestroyFence();
++    buf.fence->CreateFence();
++  }
++  glFlush();
++}
++
 +bool CRendererDRMPRIMEGLES::RenderPlacebo(CVideoBufferDRMPRIME* buffer, int index)
 +{
 +  AVFrame* avFrame = buffer->GetAVFrame();
-+  if (!avFrame || !av_frame_get_side_data(avFrame, AV_FRAME_DATA_DOVI_METADATA))
++  if (!avFrame)
++  {
++    const uint64_t failures = ++m_profile5RenderFailures;
++    if (ShouldLogProfile5Anomaly(failures))
++    {
++      CLog::Log(LOGWARNING,
++                "DRMPRIMEGLES: Dolby Vision Profile 5 render has no AVFrame index={} failures={}",
++                index, failures);
++    }
 +    return false;
++  }
++
++  const bool hasDoviSideData = av_frame_get_side_data(avFrame, AV_FRAME_DATA_DOVI_METADATA);
++  if (!hasDoviSideData)
++  {
++    const uint64_t missing = ++m_profile5MissingDoviSideData;
++    if (ShouldLogProfile5Anomaly(missing))
++    {
++      CLog::Log(LOGWARNING,
++                "DRMPRIMEGLES: Dolby Vision Profile 5 AVFrame is missing RPU side data "
++                "index={} pts={} drm_format=0x{:08x} missing={} frames={}",
++                index, FramePtsForLog(avFrame), DrmFormatForLog(avFrame), missing,
++                m_profile5Frames);
++    }
++    return false;
++  }
 +
 +  if (!InitPlacebo())
++  {
++    const uint64_t failures = ++m_profile5RenderFailures;
++    if (ShouldLogProfile5Anomaly(failures))
++    {
++      CLog::Log(LOGWARNING,
++                "DRMPRIMEGLES: failed to initialize libplacebo for Dolby Vision Profile 5 "
++                "index={} pts={} failures={}",
++                index, FramePtsForLog(avFrame), failures);
++    }
 +    return false;
++  }
 +
 +  const int width = CServiceBroker::GetWinSystem()->GetGfxContext().GetWidth();
 +  const int height = CServiceBroker::GetWinSystem()->GetGfxContext().GetHeight();
 +
 +  if (width <= 0 || height <= 0)
++  {
++    const uint64_t failures = ++m_profile5RenderFailures;
++    if (ShouldLogProfile5Anomaly(failures))
++    {
++      CLog::Log(LOGWARNING,
++                "DRMPRIMEGLES: invalid libplacebo target size for Dolby Vision Profile 5 "
++                "index={} pts={} size={}x{} failures={}",
++                index, FramePtsForLog(avFrame), width, height, failures);
++    }
 +    return false;
++  }
 +
 +  struct pl_frame image = {};
 +  std::unique_ptr<CEGLImage> manualEglImages[2];
@@ -978,14 +1077,15 @@ index c36f016c83..53e3817f47 100644
  {
    switch (feature)
 diff --git a/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.h b/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.h
-index 20be4e3f75..7455079de3 100644
+index 20be4e3f75..53004f63b1 100644
 --- a/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.h
 +++ b/xbmc/cores/VideoPlayer/VideoRenderers/HwDecRender/RendererDRMPRIMEGLES.h
-@@ -11,8 +11,19 @@
+@@ -11,8 +11,20 @@
  #include "DRMPRIMEEGL.h"
  #include "cores/VideoPlayer/VideoRenderers/BaseRenderer.h"
  
 +#include <GLES2/gl2.h>
++#include <cstdint>
  #include <memory>
  
 +struct pl_log_t;
@@ -1001,7 +1101,7 @@ index 20be4e3f75..7455079de3 100644
  namespace KODI
  {
  namespace UTILS
-@@ -38,7 +49,7 @@ public:
+@@ -38,7 +50,7 @@ public:
    bool Configure(const VideoPicture& picture, float fps, unsigned int orientation) override;
    bool IsConfigured() override { return m_configured; }
    void AddVideoPicture(const VideoPicture& picture, int index) override;
@@ -1010,13 +1110,14 @@ index 20be4e3f75..7455079de3 100644
    bool Flush(bool saveBuffers) override;
    void ReleaseBuffer(int idx) override;
    bool NeedBuffer(int idx) override;
-@@ -57,14 +68,28 @@ public:
+@@ -57,14 +69,33 @@ public:
  private:
    void DrawBlackBars();
    void Render(unsigned int flags, int index);
 +  bool InitPlacebo();
 +  void DestroyPlacebo();
 +  bool RenderPlacebo(CVideoBufferDRMPRIME* buffer, int index);
++  void FinishSkippedProfile5Buffer(int index);
  
    bool m_configured = false;
 +  bool m_passthroughHDR = false;
@@ -1024,6 +1125,10 @@ index 20be4e3f75..7455079de3 100644
 +  pl_log m_placeboLog = nullptr;
 +  pl_opengl m_placeboGL = nullptr;
 +  pl_renderer m_placeboRenderer = nullptr;
++  uint64_t m_profile5Frames = 0;
++  uint64_t m_profile5BlockedFallbacks = 0;
++  uint64_t m_profile5MissingDoviSideData = 0;
++  uint64_t m_profile5RenderFailures = 0;
  
    struct BUFFER
    {

@@ -70,6 +70,7 @@ let
           ../patches/kodi/0012-rock5c-include-winsystem-for-forced-drm-prime.patch
           ../patches/kodi/0013-rock5c-drop-const-winsystem-for-name-lookup.patch
           ../patches/kodi/0014-rock5c-wayland-rkmpp-dovi-profile5-libplacebo.patch
+          ../patches/kodi/0015-rock5c-drm-prime-allow-six-render-references.patch
         ];
 
         buildInputs = (old.buildInputs or [ ]) ++ [

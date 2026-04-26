@@ -41,7 +41,7 @@ index f326e1f..9b8b3c2 100644
  typedef struct {
      MppCtx ctx;
      MppApi *mpi;
-@@ -54,11 +59,18 @@ typedef struct {
+@@ -54,11 +59,19 @@ typedef struct {
      AVBufferRef *device_ref;
  } RKMPPDecoder;
  
@@ -57,10 +57,11 @@ index f326e1f..9b8b3c2 100644
      char pending_eof;
 +    DOVIContext dovi;
 +    RKMPPDoviMetadata dovi_queue[RKMPP_DOVI_QUEUE_SIZE];
++    AVBufferRef *last_dovi_metadata;
  } RKMPPDecodeContext;
  
  typedef struct {
-@@ -123,10 +135,128 @@ static int rkmpp_write_data(AVCodecContext *avctx, uint8_t *buffer, int size, in
+@@ -123,10 +135,144 @@ static int rkmpp_write_data(AVCodecContext *avctx, uint8_t *buffer, int size, in
      return ret;
  }
  
@@ -70,6 +71,7 @@ index f326e1f..9b8b3c2 100644
 +        av_buffer_unref(&rk_context->dovi_queue[i].metadata);
 +        rk_context->dovi_queue[i].pts = AV_NOPTS_VALUE;
 +    }
++    av_buffer_unref(&rk_context->last_dovi_metadata);
 +}
 +
 +static int rkmpp_queue_dovi_metadata(AVCodecContext *avctx, int64_t pts)
@@ -114,6 +116,8 @@ index f326e1f..9b8b3c2 100644
 +static int rkmpp_attach_dovi_metadata(AVCodecContext *avctx, AVFrame *frame)
 +{
 +    RKMPPDecodeContext *rk_context = avctx->priv_data;
++    AVBufferRef *metadata = NULL;
++    AVFrameSideData *sd;
 +
 +    if (frame->pts == AV_NOPTS_VALUE)
 +        return 0;
@@ -122,22 +126,33 @@ index f326e1f..9b8b3c2 100644
 +        RKMPPDoviMetadata *entry = &rk_context->dovi_queue[i];
 +
 +        if (entry->metadata && entry->pts == frame->pts) {
-+            AVBufferRef *metadata = av_buffer_ref(entry->metadata);
-+            AVFrameSideData *sd;
-+
-+            if (!metadata)
++            av_buffer_unref(&rk_context->last_dovi_metadata);
++            rk_context->last_dovi_metadata = av_buffer_ref(entry->metadata);
++            if (!rk_context->last_dovi_metadata)
 +                return AVERROR(ENOMEM);
 +
-+            sd = av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_DOVI_METADATA, metadata);
-+            if (!sd) {
-+                av_buffer_unref(&metadata);
-+                return AVERROR(ENOMEM);
-+            }
-+
++            metadata = av_buffer_ref(entry->metadata);
 +            av_buffer_unref(&entry->metadata);
 +            entry->pts = AV_NOPTS_VALUE;
-+            return 0;
++            goto attach;
 +        }
++    }
++
++    if (rk_context->last_dovi_metadata) {
++        av_log(avctx, AV_LOG_DEBUG,
++               "Reusing previous Dolby Vision metadata for frame PTS %"PRId64"\n",
++               frame->pts);
++        metadata = av_buffer_ref(rk_context->last_dovi_metadata);
++    }
++
++attach:
++    if (!metadata)
++        return 0;
++
++    sd = av_frame_new_side_data_from_buf(frame, AV_FRAME_DATA_DOVI_METADATA, metadata);
++    if (!sd) {
++        av_buffer_unref(&metadata);
++        return AVERROR(ENOMEM);
 +    }
 +
 +    return 0;
@@ -159,10 +174,12 @@ index f326e1f..9b8b3c2 100644
 +        return 0;
 +    }
 +
-+    if (pkt.nb_nals > 1 && pkt.nals[pkt.nb_nals - 1].type == HEVC_NAL_UNSPEC62 &&
-+        pkt.nals[pkt.nb_nals - 1].size > 2 && !pkt.nals[pkt.nb_nals - 1].nuh_layer_id &&
-+        !pkt.nals[pkt.nb_nals - 1].temporal_id) {
-+        H2645NAL *nal = &pkt.nals[pkt.nb_nals - 1];
++    for (int i = 0; i < pkt.nb_nals; i++) {
++        H2645NAL *nal = &pkt.nals[i];
++
++        if (nal->type != HEVC_NAL_UNSPEC62 || nal->size <= 2 ||
++            nal->nuh_layer_id || nal->temporal_id)
++            continue;
 +
 +        ret = ff_dovi_rpu_parse(&rk_context->dovi, nal->data + 2, nal->size - 2,
 +                                avctx->err_recognition);
