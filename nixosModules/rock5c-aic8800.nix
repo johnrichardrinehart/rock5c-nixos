@@ -7,9 +7,7 @@
 let
   cfg = config.rock5c.aic8800;
   aic8800Src = import ../packages/aic8800-src.nix { inherit (pkgs) fetchFromGitHub; };
-  aic8800Pkg = pkgs.callPackage ../packages/aic8800.nix {
-    inherit (config.boot.kernelPackages) kernel kernelModuleMakeFlags;
-  };
+  aic8800Pkg = config.boot.kernelPackages.callPackage ../packages/aic8800.nix { };
 in
 {
   config = lib.mkIf cfg.enable {

@@ -1,9 +1,9 @@
 {
-  pkgs,
   stdenv,
   lib,
   fetchFromGitHub,
-  kernel ? pkgs.linuxPackages.kernel,
+  dos2unix,
+  kernel,
   kmod,
   buildPackages,
   kernelModuleMakeFlags ? [ ],
@@ -21,7 +21,10 @@ stdenv.mkDerivation rec {
     "format"
   ];
 
-  nativeBuildInputs = [ kmod ] ++ kernel.moduleBuildDependencies;
+  nativeBuildInputs = [
+    dos2unix
+    kmod
+  ] ++ kernel.moduleBuildDependencies;
   depsBuildBuild = [ buildPackages.stdenv.cc ];
   makeFlags = [ "CONFIG_PLATFORM_UBUNTU=n" ];
 
@@ -29,6 +32,12 @@ stdenv.mkDerivation rec {
     KERNELDIR = "${kernel.dev}/lib/modules/${kernel.modDirVersion}/build";
     KERNELVERSION = kernel.modDirVersion;
   };
+
+  # Some USB driver sources are CRLF, which makes vendor patches fail with
+  # "different line endings" rejects.
+  prePatch = ''
+    find src/USB/driver_fw/drivers -type f -name '*.c' -exec dos2unix {} +
+  '';
 
   buildPhase = ''
     cp -r "$KERNELDIR" ./build; # need it to be writeable

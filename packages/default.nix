@@ -121,7 +121,6 @@ let
   '';
 in
 {
-  aic8800 = pkgs.callPackage ./aic8800.nix { };
   ffmpeg_8-full-rkmpp = ffmpeg8Rkmpp;
   flash-rock5c-emmc = flashRock5cEmmc;
   flash-rock5c-sd = flashRock5cSd;
