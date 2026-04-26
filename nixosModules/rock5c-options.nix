@@ -88,6 +88,202 @@
       };
     };
 
+    cpuStalls = {
+      enable = lib.mkEnableOption "Rock 5C CPU lockup and RCU stall handling/debugging";
+
+      recovery = {
+        enable = lib.mkEnableOption "panic and reboot handling for CPU lockups" // {
+          default = true;
+        };
+
+        softlockupPanic = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Set `softlockup_panic=1` so soft lockups panic instead of leaving the board wedged.";
+        };
+
+        hardlockupPanic = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Set `hardlockup_panic=1` so hard lockups panic instead of leaving the board wedged.";
+        };
+
+        hungTaskPanic = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Set `hung_task_panic=1`. Leave this off unless blocked tasks are the failure being tested.";
+        };
+
+        panicTimeout = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.positive;
+          default = 30;
+          example = 10;
+          description = "Seconds before rebooting after a kernel panic. Set to null to leave `panic=` unmanaged.";
+        };
+      };
+
+      watchdog = {
+        enable = lib.mkEnableOption "kernel watchdog parameters for CPU stall diagnosis" // {
+          default = true;
+        };
+
+        threshold = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.positive;
+          default = null;
+          example = 10;
+          description = "Optional `watchdog_thresh=` value in seconds.";
+        };
+      };
+
+      rcu = {
+        enable = lib.mkEnableOption "RCU stall reporting parameters" // {
+          default = true;
+        };
+
+        panicOnStall = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Set `kernel.panic_on_rcu_stall=1` so repeated RCU stalls become crash-capturable.";
+        };
+
+        maxStallsToPanic = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.positive;
+          default = 1;
+          example = 2;
+          description = "Optional `kernel.max_rcu_stall_to_panic` sysctl when `panicOnStall` is enabled.";
+        };
+
+        stallTimeout = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.positive;
+          default = null;
+          example = 21;
+          description = "Optional `rcupdate.rcu_cpu_stall_timeout=` value in seconds.";
+        };
+
+        cpuStallCpuTime = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Set `rcupdate.rcu_cpu_stall_cputime=1` to include CPU-time and interrupt/task counts in RCU stall reports.";
+        };
+
+        expStallTaskDetails = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Set `rcupdate.rcu_exp_stall_task_details=1` for expedited RCU stall task details.";
+        };
+      };
+
+      cpuidle = {
+        disable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Add `cpuidle.off=1` for a full cpuidle A/B test.";
+        };
+
+        governor = lib.mkOption {
+          type = lib.types.nullOr (
+            lib.types.enum [
+              "ladder"
+              "menu"
+              "teo"
+            ]
+          );
+          default = null;
+          example = "teo";
+          description = "Optional `cpuidle.governor=` override.";
+        };
+
+        disableStates = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "cpu-sleep" ];
+          description = ''
+            cpuidle states to disable at runtime after boot. Each selector can
+            be a state index (`1`), sysfs state name (`state1`), state `name`,
+            or state `desc`. This is useful for testing deeper PSCI idle states
+            such as `cpu-sleep` while leaving shallow WFI enabled.
+          '';
+        };
+      };
+
+      logging = {
+        verbose = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Add verbose printk-oriented kernel parameters (`loglevel=7`, `printk.time=1`).";
+        };
+
+        kernelConfig = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Enable pstore/ramoops kernel config, and dynamic debug config when requested.";
+        };
+      };
+
+      dynamicDebug = {
+        enable = lib.mkEnableOption "Linux dynamic debug support for CPU stall investigation";
+
+        boot = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Apply selected dynamic debug queries at boot via the `dyndbg=` kernel parameter.";
+        };
+
+        categories = lib.mkOption {
+          type = lib.types.listOf (
+            lib.types.enum [
+              "cpuidle"
+              "psci"
+              "rcu"
+              "timers"
+              "scheduler"
+              "usb"
+              "aic8800"
+            ]
+          );
+          default = [
+            "cpuidle"
+            "psci"
+            "rcu"
+          ];
+          example = [
+            "cpuidle"
+            "psci"
+            "usb"
+            "aic8800"
+          ];
+          description = "Predefined dynamic debug query groups to enable via boot parameter or helper command.";
+        };
+
+        queries = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "file drivers/base/power/* +p" ];
+          description = "Extra raw dynamic debug queries.";
+        };
+      };
+
+      trace = {
+        enable = lib.mkEnableOption "boot-time tracefs events useful for CPU idle/stall diagnosis";
+
+        events = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [
+            "power/cpu_idle"
+            "irq/irq_handler_entry"
+            "irq/irq_handler_exit"
+            "timer/hrtimer_expire_entry"
+            "timer/hrtimer_expire_exit"
+          ];
+          example = [
+            "power/cpu_idle"
+            "timer/hrtimer_expire_entry"
+          ];
+          description = "Trace event paths under `/sys/kernel/tracing/events` to enable.";
+        };
+      };
+    };
+
     gstreamerHwdec.enable = lib.mkEnableOption "Rock 5C GStreamer stateless hardware decode tools";
     rkvdec.enable = lib.mkEnableOption "Collabora RK3588 rkvdec backport for Rock 5C";
 

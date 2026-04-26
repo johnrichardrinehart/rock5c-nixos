@@ -55,5 +55,26 @@ in
     }
   ];
 
+  eval-cpu-stalls = evalSystem [
+    {
+      rock5c = {
+        enable = true;
+        cpuStalls = {
+          enable = true;
+          recovery.panicTimeout = 30;
+          cpuidle.disableStates = [ "cpu-sleep" ];
+          dynamicDebug = {
+            enable = true;
+            categories = [
+              "cpuidle"
+              "psci"
+              "rcu"
+            ];
+          };
+        };
+      };
+    }
+  ];
+
   rockchip-mpp = pkgs.rockchip_mpp;
 }
