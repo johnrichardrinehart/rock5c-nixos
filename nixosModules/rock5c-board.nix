@@ -45,6 +45,22 @@ in
         '';
       }
       {
+        name = "rock5c-hdmi0-cec";
+        filter = "rockchip/rk3588s-rock-5c.dtb";
+        dtsText = ''
+          /dts-v1/;
+          /plugin/;
+
+          / {
+            compatible = "radxa,rock-5c", "rockchip,rk3588s";
+          };
+
+          &hdmi0 {
+            cec-enable = "true";
+          };
+        '';
+      }
+      {
         name = "rock5c-ramoops";
         filter = "rockchip/rk3588s-rock-5c.dtb";
         dtsText = ''
@@ -75,7 +91,10 @@ in
       description = "Mount pstore filesystem for crash capture";
       wantedBy = [ "multi-user.target" ];
       after = [ "local-fs.target" ];
-      path = [ pkgs.util-linux pkgs.coreutils ];
+      path = [
+        pkgs.util-linux
+        pkgs.coreutils
+      ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
