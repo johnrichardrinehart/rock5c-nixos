@@ -61,8 +61,14 @@ let
 in
 {
   config = lib.mkIf cfg.enable {
-    system.build.images.rock5c_raw_image = makeRock5cImage {
-      name = "rock-5c-raw-image";
+    image.modules.sdImage =
+      { config, ... }:
+      {
+        system.build.image = config.system.build.sdImage;
+      };
+
+    system.build.sdImage = makeRock5cImage {
+      name = "rock-5c-sdcard-image";
       volumeLabel = cfg.rootfsLabel;
     };
   };

@@ -28,6 +28,33 @@ let
       };
     in
     pkgs.writeText "rock5c-eval-${builtins.toString (builtins.length modules)}" evaluated.config.system.build.toplevel.drvPath;
+  evalImages =
+    modules:
+    let
+      evaluated = lib.nixosSystem {
+        inherit system;
+        modules = [
+          {
+            nixpkgs.overlays = [ (import ./overlays/default.nix) ];
+          }
+          rock5cModules.default
+          {
+            fileSystems."/" = {
+              device = "/dev/disk/by-label/NIXOS_SD";
+              fsType = "ext4";
+            };
+            system.stateVersion = "25.11";
+          }
+        ]
+        ++ modules;
+      };
+    in
+    pkgs.writeText "rock5c-images-eval" (
+      builtins.toJSON {
+        hasSdImage = evaluated.config.system.build.images ? sdImage;
+        hasLegacySdImage = evaluated.config.system.build ? sdImage;
+      }
+    );
 in
 {
   eval-mpp = evalSystem [
@@ -73,6 +100,12 @@ in
           };
         };
       };
+    }
+  ];
+
+  eval-images = evalImages [
+    {
+      rock5c.enable = true;
     }
   ];
 
