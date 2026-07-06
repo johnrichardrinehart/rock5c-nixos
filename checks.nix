@@ -27,7 +27,11 @@ let
         ++ modules;
       };
     in
-    pkgs.writeText "rock5c-eval-${builtins.toString (builtins.length modules)}" evaluated.config.system.build.toplevel.drvPath;
+    pkgs.writeText "rock5c-eval-${builtins.toString (builtins.length modules)}" (
+      # Force NixOS module evaluation without making the tiny marker check depend
+      # on a not-built system toplevel drv path, which breaks CI under --no-build.
+      builtins.unsafeDiscardStringContext evaluated.config.system.build.toplevel.drvPath
+    );
   evalImages =
     modules:
     let

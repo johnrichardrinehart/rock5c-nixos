@@ -23,5 +23,12 @@ jobs:
           flakehub: false
       - name: Check flake shape
         run: nix flake check --no-build --print-build-logs
-      - name: Check image output wiring
-        run: nix build .#checks.x86_64-linux.eval-images --no-link --print-build-logs
+      - name: Check module evaluation markers
+        run: |
+          nix build \
+            .#checks.x86_64-linux.eval-images \
+            .#checks.x86_64-linux.eval-mpp \
+            .#checks.x86_64-linux.eval-aic8800-stable-mac \
+            .#checks.x86_64-linux.eval-cpu-stalls \
+            --no-link \
+            --print-build-logs
